@@ -563,9 +563,20 @@ namespace FriishProduce
             if (p == null)
                 throw new InvalidOperationException($"Failed to start helper tool: {appPath}");
 
-            string standardOutput = redirectOutput ? p.StandardOutput.ReadToEnd() : null;
-            string standardError = redirectOutput ? p.StandardError.ReadToEnd() : null;
+            // Drain both redirected streams concurrently to avoid a full stderr pipe
+            // blocking a helper while stdout is being read.
+            Task<string> outputTask = redirectOutput
+                ? p.StandardOutput.ReadToEndAsync()
+                : Task.FromResult<string>(null);
+            Task<string> errorTask = redirectOutput
+                ? p.StandardError.ReadToEndAsync()
+                : Task.FromResult<string>(null);
+
             p.WaitForExit();
+            Task.WaitAll(outputTask, errorTask);
+
+            string standardOutput = outputTask.Result;
+            string standardError = errorTask.Result;
 
             if (p.ExitCode != 0)
                 throw new InvalidOperationException(
