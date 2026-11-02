@@ -34,15 +34,25 @@ These changes are compatibility seams. They do **not** yet constitute a runnable
 
 ## Gatekeeper / release requirements
 
-A DMG by itself does not make an app trusted by macOS. For normal first-launch behavior without the unidentified-developer / damaged-app blocks, the release app must be signed with a valid **Developer ID Application** identity, use the hardened runtime, be notarized by Apple, and have the returned ticket stapled to the app (and preferably the DMG). The CI release job should fail closed when signing or notarization credentials are absent; it must not silently label an unsigned development build as a safe public release.
+A DMG by itself does not make an app trusted by macOS. For normal first-launch behavior without the unidentified-developer / damaged-app blocks, the release app must be signed with a valid **Developer ID Application** identity, use the hardened runtime, be notarized by Apple, and have the returned ticket stapled to the app and DMG. The packager must fail closed when signing or notarization credentials are absent; it must never publish an unsigned prototype as a safe public release.
 
-Required GitHub Actions secrets should be set up only when the signing account is available:
+The repository now contains:
 
-- `APPLE_CERTIFICATE_P12` and `APPLE_CERTIFICATE_PASSWORD`
-- `APPLE_SIGNING_IDENTITY`
-- Either an App Store Connect API key triplet (`APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`) or Apple ID notarization credentials (`APPLE_ID`, `APPLE_ID_PASSWORD`, `APPLE_TEAM_ID`)
+- `packaging/macos/FriishProduce.entitlements`: the hardened-runtime exceptions required by the non-Native-AOT .NET runtime.
+- `packaging/macos/create-notarized-dmg.sh`: signs nested Mach-O tools and the app host, verifies the bundle, notarizes and staples both the app and DMG, runs Gatekeeper assessments, and writes a SHA-256 checksum. It accepts an already-built `.app`; it does not build the application or make the Windows Forms interface portable.
 
-For a release candidate, verify the exported app with `codesign --verify --deep --strict`, submit it using `xcrun notarytool`, staple with `xcrun stapler`, and validate the stapled artifact before publishing.
+To prepare a signing runner, import a Developer ID Application certificate (`.p12`) into a temporary macOS keychain, configure its partition list for `codesign`, and create a notarytool keychain profile. Example profile creation using an App Store Connect API key:
+
+```sh
+xcrun notarytool store-credentials FriishProduceNotary \
+  --key /path/to/AuthKey_ABC123.p8 \
+  --key-id ABC123DEF4 \
+  --issuer 00000000-0000-0000-0000-000000000000
+```
+
+Then run the packager with `APPLE_SIGNING_IDENTITY` set to the exact Developer ID Application identity and `APPLE_NOTARY_PROFILE=FriishProduceNotary`. Keep the certificate, private key, API key, and passwords in GitHub Actions secrets; never commit them to the repository.
+
+A Developer ID certificate and Apple notarization access are required for the no-warning public release target. An unsigned or ad-hoc-signed DMG cannot be advertised as Gatekeeper-clean. The packager must run on macOS with Xcode Command Line Tools installed.
 
 ## Current status
 
@@ -51,6 +61,8 @@ For a release candidate, verify the exported app with `codesign --verify --deep 
 - [x] User-writable macOS data directory
 - [x] Cross-platform shell integration boundary
 - [x] Native macOS helper-tool resolution boundary
+- [x] Fail-closed .app/DMG signing and notarization packager
+- [x] .NET hardened-runtime entitlement manifest
 - [ ] Modern cross-platform engine project
 - [ ] Avalonia desktop frontend and feature parity
 - [ ] Native macOS helper binaries and tests
