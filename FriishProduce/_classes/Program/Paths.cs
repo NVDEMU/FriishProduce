@@ -104,6 +104,7 @@ namespace FriishProduce
         public static readonly string Tools = JoinDirectory(ResourceFolder, "resources", "tools");
         public static readonly string Languages = JoinDirectory(ResourceFolder, "strings");
         public static readonly string BIOSFiles = JoinDirectory(ResourceFolder, "resources", "bios");
+        public static readonly string NativeTools = JoinDirectory(ResourceFolder, "tools", "native", "macos");
 
         // Extracted paths
         public static readonly string WAD = JoinDirectory(WorkingFolder, "wad");
