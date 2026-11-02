@@ -14,7 +14,7 @@ namespace FriishProduce
     {
         private static string QuoteArgument(string value)
         {
-            return "\"" + (value ?? string.Empty).Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+            return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
         }
 
         private static void StartDetached(string fileName, string arguments)
