@@ -3,16 +3,8 @@ name: Build and release
 on:
   push:
     branches: ["main"]
-    paths:
-      - "FriishProduce/**"
-      - "FriishProduce.sln"
-      - ".github/workflows/**"
   pull_request:
     branches: ["main"]
-    paths:
-      - "FriishProduce/**"
-      - "FriishProduce.sln"
-      - ".github/workflows/**"
   workflow_dispatch:
 
 permissions:
