@@ -127,7 +127,7 @@ namespace FriishProduce
                 if (Directory.EnumerateFiles(temp, "*.*", SearchOption.AllDirectories).Count() > 0)
                 {
                     File.WriteAllText(Path.Combine(temp, "_Copy and overwrite original files.txt"), "");
-                    System.Diagnostics.Process.Start("explorer.exe", $"\"{temp}\"");
+                    PlatformServices.OpenDirectory(temp);
                 }
                 else
                     ClearFiles(false, true);
