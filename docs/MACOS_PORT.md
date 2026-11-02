@@ -57,6 +57,7 @@ A Developer ID certificate and Apple notarization access are required for the no
 ## Current status
 
 - [x] Windows build/release workflow cleanup
+- [ ] Verify a successful Windows Actions run (the fork currently reports zero workflow runs and zero releases)
 - [x] App-bundle-aware resource paths
 - [x] User-writable macOS data directory
 - [x] Cross-platform shell integration boundary
