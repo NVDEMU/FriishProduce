@@ -38,14 +38,24 @@ xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
 APP_PATH="$(cd "$(dirname "$APP_PATH")" && pwd)/$(basename "$APP_PATH")"
 DMG_DIR="$(mkdir -p "$(dirname "$DMG_PATH")" && cd "$(dirname "$DMG_PATH")" && pwd)"
 DMG_PATH="$DMG_DIR/$(basename "$DMG_PATH")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENTITLEMENTS="$SCRIPT_DIR/FriishProduce.entitlements"
+[[ -f "$ENTITLEMENTS" ]] || fail "Missing .NET hardened-runtime entitlements: $ENTITLEMENTS"
+
+EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Contents/Info.plist" 2>/dev/null)" \
+  || fail "Info.plist does not define CFBundleExecutable."
+MAIN_EXECUTABLE="$APP_PATH/Contents/MacOS/$EXECUTABLE_NAME"
+[[ -x "$MAIN_EXECUTABLE" ]] || fail "App executable is missing or not executable: $MAIN_EXECUTABLE"
 
 WORK_DIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORK_DIR"; }
 trap cleanup EXIT
 
-# Sign embedded native code from deepest file to outer app. Managed .NET assemblies
-# are not Mach-O files and are intentionally left to the app bundle signature.
+# Sign nested Mach-O libraries and helper executables first. The app host receives
+# the .NET hardened-runtime entitlements; managed assemblies are signed as part
+# of the outer bundle seal rather than treated as independent Mach-O code.
 while IFS= read -r -d '' candidate; do
+  [[ "$candidate" == "$MAIN_EXECUTABLE" ]] && continue
   description="$(file -b "$candidate" 2>/dev/null || true)"
   if grep -q 'Mach-O' <<<"$description"; then
     echo "Signing nested native code: $candidate"
@@ -53,9 +63,11 @@ while IFS= read -r -d '' candidate; do
   fi
 done < <(find "$APP_PATH/Contents" -type f -print0)
 
-codesign --force --deep --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP_PATH"
+codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$MAIN_EXECUTABLE"
+# Sign the containing bundle last. Avoid --deep for signing; nested code was
+# explicitly signed above so each component receives the correct signature.
+codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$APP_PATH"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-spctl --assess --type execute --verbose=2 "$APP_PATH"
 
 # Submit the app first so its notarization ticket can be stapled into the app
 # before it is placed inside the disk image.
@@ -64,6 +76,7 @@ ditto -c -k --keepParent "$APP_PATH" "$APP_ZIP"
 xcrun notarytool submit "$APP_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
 xcrun stapler staple "$APP_PATH"
 xcrun stapler validate "$APP_PATH"
+codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
 STAGING="$WORK_DIR/dmg-root"
 mkdir -p "$STAGING"
@@ -77,6 +90,7 @@ xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
 xcrun stapler staple "$DMG_PATH"
 xcrun stapler validate "$DMG_PATH"
 codesign --verify --verbose=2 "$DMG_PATH"
+spctl --assess --type execute --verbose=2 "$APP_PATH"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_PATH"
 
 shasum -a 256 "$DMG_PATH" > "$DMG_PATH.sha256"
