@@ -1938,7 +1938,7 @@ namespace FriishProduce
                         switch (MessageBox.Show(Program.Lang.Msg(3), null, MessageBox.Buttons.YesNo, MessageBox.Icons.Information))
                         {
                             case MessageBox.Result.Yes:
-                                System.Diagnostics.Process.Start("explorer.exe", $"/select, \"{targetFile}\"");
+                                PlatformServices.RevealFile(targetFile);
                                 break;
                         }
                     }
