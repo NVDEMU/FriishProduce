@@ -1192,7 +1192,7 @@ namespace FriishProduce
         {
             if (MessageBox.Show(Program.Lang.Msg(16), MessageBox.Buttons.YesNo) == MessageBox.Result.Yes)
             {
-                System.Diagnostics.Process.Start("https://ko-fi.com/mr_lechkar/tip");
+                PlatformServices.OpenUrl("https://ko-fi.com/mr_lechkar/tip");
             }
         }
 
@@ -1202,7 +1202,7 @@ namespace FriishProduce
                         : Program.Lang.Current.StartsWith("es") ? "es/"
                         : Program.Lang.Current.StartsWith("ja") ? "ja/"
                         : */ null;
-            System.Diagnostics.Process.Start("https://catmanfan.github.io/FriishProduce/" + lang);
+            PlatformServices.OpenUrl("https://catmanfan.github.io/FriishProduce/" + lang);
         }
 
         private async void TestDatabase(object sender, EventArgs e)
