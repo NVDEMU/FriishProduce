@@ -470,39 +470,109 @@ namespace FriishProduce
 
     public static class Utils
     {
-        public static string Run(byte[] app, string appName, string arguments, bool showWindow = false, bool redirectOutput = true)
+        private static bool IsMacOS =>
+            System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.OSX);
+
+        /// <summary>
+        /// Resolve a helper executable from the bundled native tool directory on macOS.
+        /// On Windows, preserve the existing embedded .exe/resource behavior.
+        /// </summary>
+        private static string ResolveExecutablePath(string app)
         {
-            string targetPath = Paths.WorkingFolder + Path.GetFileNameWithoutExtension(appName) + ".exe";
+            if (!IsMacOS)
+            {
+                string windowsPath = Path.Combine(
+                    Paths.Tools,
+                    app.Replace(Paths.Tools, "").Contains('\\') ? app.Replace(Paths.Tools, "") : Path.GetFileName(app));
 
-            File.WriteAllBytes(targetPath, app);
-            string value = Run(targetPath, Paths.WorkingFolder, arguments, showWindow, redirectOutput);
-            try { File.Delete(targetPath); } catch { }
+                return windowsPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                    ? windowsPath
+                    : windowsPath + ".exe";
+            }
 
-            return value;
+            string relativePath = app ?? string.Empty;
+            if (relativePath.StartsWith(Paths.Tools, StringComparison.OrdinalIgnoreCase))
+                relativePath = relativePath.Substring(Paths.Tools.Length);
+            else if (relativePath.StartsWith(Paths.NativeTools, StringComparison.OrdinalIgnoreCase))
+                relativePath = relativePath.Substring(Paths.NativeTools.Length);
+            else if (Path.IsPathRooted(relativePath))
+                relativePath = Path.GetFileName(relativePath);
+
+            relativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
+                                       .Replace('/', Path.DirectorySeparatorChar);
+
+            if (relativePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                relativePath = relativePath.Substring(0, relativePath.Length - 4);
+
+            return Path.Combine(Paths.NativeTools, relativePath);
         }
 
-        public static string Run(string app, string arguments, bool showWindow = false, bool redirectOutput = true) => Run(app, Paths.Tools, arguments, showWindow, redirectOutput);
+        public static string Run(byte[] app, string appName, string arguments, bool showWindow = false, bool redirectOutput = true)
+        {
+            if (IsMacOS)
+            {
+                // Never write a Windows PE executable to disk and attempt to launch it on macOS.
+                // The corresponding native helper is bundled separately in the .app.
+                return Run(appName, Paths.WorkingFolder, arguments, showWindow, redirectOutput);
+            }
+
+            string targetPath = Path.Combine(Paths.WorkingFolder, Path.GetFileNameWithoutExtension(appName) + ".exe");
+            File.WriteAllBytes(targetPath, app);
+            try
+            {
+                return Run(targetPath, Paths.WorkingFolder, arguments, showWindow, redirectOutput);
+            }
+            finally
+            {
+                try { File.Delete(targetPath); } catch { }
+            }
+        }
+
+        public static string Run(string app, string arguments, bool showWindow = false, bool redirectOutput = true) =>
+            Run(app, Paths.Tools, arguments, showWindow, redirectOutput);
 
         public static string Run(string app, string workingFolder, string arguments, bool showWindow = false, bool redirectOutput = true)
         {
-            var appPath = Path.Combine(Paths.Tools, app.Replace(Paths.Tools, "").Contains('\\') ? app.Replace(Paths.Tools, "") : Path.GetFileName(app));
+            string appPath = ResolveExecutablePath(app);
 
-            if (!appPath.EndsWith(".exe")) appPath += ".exe";
+            if (!File.Exists(appPath))
+            {
+                if (IsMacOS)
+                    throw new PlatformNotSupportedException(
+                        $"The macOS helper tool '{Path.GetFileName(appPath)}' is not bundled. " +
+                        "The macOS toolchain must be built and packaged before this injector feature can run.");
 
-            if (!File.Exists(appPath)) throw new Exception(string.Format(Program.Lang.Msg(6, 1), app));
+                throw new Exception(string.Format(Program.Lang.Msg(6, 1), app));
+            }
+
+            if (string.IsNullOrWhiteSpace(workingFolder))
+                workingFolder = Paths.WorkingFolder;
 
             using Process p = Process.Start(new ProcessStartInfo
             {
                 FileName = appPath,
                 WorkingDirectory = workingFolder,
-                Arguments = arguments,
+                Arguments = arguments ?? string.Empty,
                 UseShellExecute = false,
                 CreateNoWindow = !showWindow,
-                RedirectStandardOutput = redirectOutput
+                RedirectStandardOutput = redirectOutput,
+                RedirectStandardError = redirectOutput
             });
 
+            if (p == null)
+                throw new InvalidOperationException($"Failed to start helper tool: {appPath}");
+
+            string standardOutput = redirectOutput ? p.StandardOutput.ReadToEnd() : null;
+            string standardError = redirectOutput ? p.StandardError.ReadToEnd() : null;
             p.WaitForExit();
-            return redirectOutput ? p.StandardOutput.ReadToEnd() : null;
+
+            if (p.ExitCode != 0)
+                throw new InvalidOperationException(
+                    $"Helper tool '{Path.GetFileName(appPath)}' exited with code {p.ExitCode}." +
+                    (string.IsNullOrWhiteSpace(standardError) ? string.Empty : Environment.NewLine + standardError));
+
+            return standardOutput;
         }
 
         public static (bool Compressed, byte[] Data) ExtractContent1(byte[] input)
