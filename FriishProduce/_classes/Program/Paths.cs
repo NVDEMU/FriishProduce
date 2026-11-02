@@ -31,6 +31,30 @@ namespace FriishProduce
             return WithTrailingSeparator(path);
         }
 
+        private static string GetResourceFolder()
+        {
+            string baseDirectory = Path.GetFullPath(AppContext.BaseDirectory);
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                var executableDirectory = new DirectoryInfo(baseDirectory);
+                var contentsDirectory = executableDirectory.Parent;
+
+                // In a normal macOS bundle, the executable lives in:
+                // MyApp.app/Contents/MacOS/
+                // Resources belong in MyApp.app/Contents/Resources/.
+                if (string.Equals(executableDirectory.Name, "MacOS", StringComparison.OrdinalIgnoreCase)
+                    && contentsDirectory != null
+                    && string.Equals(contentsDirectory.Name, "Contents", StringComparison.OrdinalIgnoreCase))
+                {
+                    return WithTrailingSeparator(Path.Combine(contentsDirectory.FullName, "Resources"));
+                }
+            }
+
+            // Also supports running from a development output directory.
+            return WithTrailingSeparator(baseDirectory);
+        }
+
         private static string GetWritableDataFolder()
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
@@ -48,15 +72,16 @@ namespace FriishProduce
             return WithTrailingSeparator(folder);
         }
 
-        /// <summary>
-        /// Directory containing the running application and its bundled resources.
-        /// </summary>
+        /// <summary>Directory containing the executable and its app bundle.</summary>
         public static readonly string ApplicationFolder =
             WithTrailingSeparator(AppContext.BaseDirectory);
 
+        /// <summary>Directory containing bundled, read-only data files.</summary>
+        public static readonly string ResourceFolder = GetResourceFolder();
+
         /// <summary>
-        /// Kept for compatibility with the existing Windows updater and callers.
-        /// Use DataFolder for writable files on macOS.
+        /// Kept for compatibility with existing Windows-only update code.
+        /// Writable files should use DataFolder.
         /// </summary>
         public static readonly string EnvironmentFolder = ApplicationFolder;
 
@@ -74,11 +99,11 @@ namespace FriishProduce
         public static readonly string Out = JoinDirectory(DataFolder, "out");
 
         // Bundled, read-only application resources
-        public static readonly string Banners = JoinDirectory(ApplicationFolder, "resources", "tools", "banners");
-        public static readonly string Databases = JoinDirectory(ApplicationFolder, "resources", "databases");
-        public static readonly string Tools = JoinDirectory(ApplicationFolder, "resources", "tools");
-        public static readonly string Languages = JoinDirectory(ApplicationFolder, "strings");
-        public static readonly string BIOSFiles = JoinDirectory(ApplicationFolder, "resources", "bios");
+        public static readonly string Banners = JoinDirectory(ResourceFolder, "resources", "tools", "banners");
+        public static readonly string Databases = JoinDirectory(ResourceFolder, "resources", "databases");
+        public static readonly string Tools = JoinDirectory(ResourceFolder, "resources", "tools");
+        public static readonly string Languages = JoinDirectory(ResourceFolder, "strings");
+        public static readonly string BIOSFiles = JoinDirectory(ResourceFolder, "resources", "bios");
 
         // Extracted paths
         public static readonly string WAD = JoinDirectory(WorkingFolder, "wad");
