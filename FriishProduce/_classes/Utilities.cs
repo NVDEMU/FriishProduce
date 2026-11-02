@@ -557,18 +557,18 @@ namespace FriishProduce
                 UseShellExecute = false,
                 CreateNoWindow = !showWindow,
                 RedirectStandardOutput = redirectOutput,
-                RedirectStandardError = redirectOutput
+                RedirectStandardError = IsMacOS && redirectOutput
             });
 
             if (p == null)
                 throw new InvalidOperationException($"Failed to start helper tool: {appPath}");
 
-            // Drain both redirected streams concurrently to avoid a full stderr pipe
-            // blocking a helper while stdout is being read.
+            // Drain redirected streams concurrently so a native helper cannot deadlock
+            // when either output pipe fills while the other stream is being read.
             Task<string> outputTask = redirectOutput
                 ? p.StandardOutput.ReadToEndAsync()
                 : Task.FromResult<string>(null);
-            Task<string> errorTask = redirectOutput
+            Task<string> errorTask = IsMacOS && redirectOutput
                 ? p.StandardError.ReadToEndAsync()
                 : Task.FromResult<string>(null);
 
@@ -578,7 +578,9 @@ namespace FriishProduce
             string standardOutput = outputTask.Result;
             string standardError = errorTask.Result;
 
-            if (p.ExitCode != 0)
+            // Preserve the legacy Windows helper exit-code behavior. The new native
+            // macOS helpers use conventional exit codes and need actionable diagnostics.
+            if (IsMacOS && p.ExitCode != 0)
                 throw new InvalidOperationException(
                     $"Helper tool '{Path.GetFileName(appPath)}' exited with code {p.ExitCode}." +
                     (string.IsNullOrWhiteSpace(standardError) ? string.Empty : Environment.NewLine + standardError));
