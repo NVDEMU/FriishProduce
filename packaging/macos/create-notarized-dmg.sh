@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Build a Gatekeeper-ready macOS DMG from an already-built .app bundle.
-# This script deliberately fails closed: unsigned or unnotarized apps are never
-# emitted as a public release artifact.
+# Create an unsigned/ad-hoc-signed DMG. This does not require a paid Apple
+# Developer ID certificate and does not pretend to provide notarization.
+# For Internet-downloaded apps, Gatekeeper may require the user to remove the
+# quarantine attribute or use Finder's right-click > Open flow.
 
 APP_PATH="${1:-}"
 DMG_PATH="${2:-}"
-SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-}"
-NOTARY_PROFILE="${APPLE_NOTARY_PROFILE:-}"
 VOLUME_NAME="${DMG_VOLUME_NAME:-FriishProduce}"
 
 fail() {
@@ -16,66 +15,25 @@ fail() {
   exit 1
 }
 
-[[ -n "$APP_PATH" ]] || fail "Usage: $0 /path/to/FriishProduce.app /path/to/FriishProduce.dmg"
-[[ -n "$DMG_PATH" ]] || fail "A DMG output path is required."
-[[ -d "$APP_PATH" ]] || fail "App bundle not found: $APP_PATH"
-[[ "$APP_PATH" == *.app ]] || fail "Input must be a .app bundle."
-[[ -f "$APP_PATH/Contents/Info.plist" ]] || fail "Missing Contents/Info.plist."
-[[ -n "$SIGNING_IDENTITY" ]] || fail "APPLE_SIGNING_IDENTITY is not set."
-[[ -n "$NOTARY_PROFILE" ]] || fail "APPLE_NOTARY_PROFILE is not set."
+[[ -n "$APP_PATH" && -n "$DMG_PATH" ]] || fail "Usage: $0 /path/to/FriishProduce.app /path/to/FriishProduce.dmg"
+[[ -d "$APP_PATH" && "$APP_PATH" == *.app ]] || fail "Input must be an existing .app bundle."
+[[ -f "$APP_PATH/Contents/Info.plist" ]] || fail "App bundle is missing Contents/Info.plist."
+[[ -x "$APP_PATH/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Contents/Info.plist")" ]]   || fail "App's CFBundleExecutable is missing or not executable."
 
-command -v codesign >/dev/null || fail "codesign is unavailable (run on macOS)."
-command -v xcrun >/dev/null || fail "xcrun is unavailable (install Xcode Command Line Tools)."
-command -v hdiutil >/dev/null || fail "hdiutil is unavailable (run on macOS)."
-command -v ditto >/dev/null || fail "ditto is unavailable (run on macOS)."
-
-IDENTITIES="$(security find-identity -v -p codesigning 2>/dev/null || true)"
-grep -Fq "$SIGNING_IDENTITY" <<<"$IDENTITIES" || fail "Signing identity was not found in the keychain: $SIGNING_IDENTITY"
-
-xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
-  || fail "Notary profile '$NOTARY_PROFILE' is unavailable or invalid."
+command -v hdiutil >/dev/null || fail "hdiutil is required; run this script on macOS."
+command -v ditto >/dev/null || fail "ditto is required; run this script on macOS."
+command -v codesign >/dev/null || fail "codesign is required; run this script on macOS."
 
 APP_PATH="$(cd "$(dirname "$APP_PATH")" && pwd)/$(basename "$APP_PATH")"
 DMG_DIR="$(mkdir -p "$(dirname "$DMG_PATH")" && cd "$(dirname "$DMG_PATH")" && pwd)"
 DMG_PATH="$DMG_DIR/$(basename "$DMG_PATH")"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENTITLEMENTS="$SCRIPT_DIR/FriishProduce.entitlements"
-[[ -f "$ENTITLEMENTS" ]] || fail "Missing .NET hardened-runtime entitlements: $ENTITLEMENTS"
-
-EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Contents/Info.plist" 2>/dev/null)" \
-  || fail "Info.plist does not define CFBundleExecutable."
-MAIN_EXECUTABLE="$APP_PATH/Contents/MacOS/$EXECUTABLE_NAME"
-[[ -x "$MAIN_EXECUTABLE" ]] || fail "App executable is missing or not executable: $MAIN_EXECUTABLE"
-
 WORK_DIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORK_DIR"; }
 trap cleanup EXIT
 
-# Sign nested Mach-O libraries and helper executables first. The app host receives
-# the .NET hardened-runtime entitlements; managed assemblies are signed as part
-# of the outer bundle seal rather than treated as independent Mach-O code.
-while IFS= read -r -d '' candidate; do
-  [[ "$candidate" == "$MAIN_EXECUTABLE" ]] && continue
-  description="$(file -b "$candidate" 2>/dev/null || true)"
-  if grep -q 'Mach-O' <<<"$description"; then
-    echo "Signing nested native code: $candidate"
-    codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$candidate"
-  fi
-done < <(find "$APP_PATH/Contents" -type f -print0)
-
-codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$MAIN_EXECUTABLE"
-# Sign the containing bundle last. Avoid --deep for signing; nested code was
-# explicitly signed above so each component receives the correct signature.
-codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$APP_PATH"
-codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-
-# Submit the app first so its notarization ticket can be stapled into the app
-# before it is placed inside the disk image.
-APP_ZIP="$WORK_DIR/FriishProduce-notary.zip"
-ditto -c -k --keepParent "$APP_PATH" "$APP_ZIP"
-xcrun notarytool submit "$APP_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
-xcrun stapler staple "$APP_PATH"
-xcrun stapler validate "$APP_PATH"
+# Add an ad-hoc signature. This catches malformed nested code/signature
+# structure but does not establish a Developer ID identity or notarization.
+codesign --force --deep --sign - "$APP_PATH"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
 STAGING="$WORK_DIR/dmg-root"
@@ -83,15 +41,46 @@ mkdir -p "$STAGING"
 ditto "$APP_PATH" "$STAGING/$(basename "$APP_PATH")"
 ln -s /Applications "$STAGING/Applications"
 
+cat > "$STAGING/First Launch.command" <<'LAUNCHER'
+#!/bin/bash
+set -e
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP="$APP_DIR/FriishProduce.app"
+if [[ ! -d "$APP" ]]; then
+  echo "FriishProduce.app was not found beside this launcher."
+  read -r -p "Press Return to close..."
+  exit 1
+fi
+echo "Removing the macOS download quarantine attribute from this app..."
+xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+echo "Opening FriishProduce..."
+open "$APP"
+LAUNCHER
+chmod +x "$STAGING/First Launch.command"
+
+cat > "$STAGING/READ ME - FIRST LAUNCH.txt" <<'README'
+FriishProduce for macOS — first launch
+
+This community build is not signed with an Apple Developer ID and is not notarized.
+macOS may block it when downloaded from the Internet.
+
+Recommended:
+1. Drag FriishProduce.app to Applications.
+2. Open Terminal and paste:
+   xattr -dr com.apple.quarantine "/Applications/FriishProduce.app"
+3. Open FriishProduce from Applications.
+
+Alternatively, in Finder, Control-click FriishProduce.app, choose Open, then choose Open
+again in the confirmation dialog. If macOS still blocks it, use the Terminal command
+above. Do not run this workaround on an app you do not trust.
+
+The included First Launch.command only clears quarantine from the copy of FriishProduce.app
+beside it on the mounted disk image. It does not install the app into Applications.
+README
+
 rm -f "$DMG_PATH"
 hdiutil create -volname "$VOLUME_NAME" -srcfolder "$STAGING" -ov -format UDZO "$DMG_PATH"
-codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$DMG_PATH"
-xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
-xcrun stapler staple "$DMG_PATH"
-xcrun stapler validate "$DMG_PATH"
+codesign --force --sign - "$DMG_PATH"
 codesign --verify --verbose=2 "$DMG_PATH"
-spctl --assess --type execute --verbose=2 "$APP_PATH"
-spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_PATH"
-
 shasum -a 256 "$DMG_PATH" > "$DMG_PATH.sha256"
-echo "Created notarized, stapled, validated DMG: $DMG_PATH"
+echo "Created unsigned/ad-hoc-signed DMG: $DMG_PATH"
