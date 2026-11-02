@@ -42,6 +42,17 @@ Please check the **[wiki](https://catmanfan.github.io/FriishProduce/)** for a tu
 
 ---
 
+## Platform support
+
+| Platform | Status |
+| --- | --- |
+| Windows | Existing WinForms application; automated Windows build/release workflow is configured. A successful run is still required before the refreshed download can be called verified. |
+| macOS | **In progress; no functional macOS download is available yet.** The current WinForms/WPF interface and bundled Windows helper executables are not macOS-compatible. |
+
+The macOS port status, engineering blockers, and notarized-DMG packaging requirements are tracked in [docs/MACOS_PORT.md](docs/MACOS_PORT.md). The repository includes a fail-closed packaging script at [packaging/macos/create-notarized-dmg.sh](packaging/macos/create-notarized-dmg.sh); it only packages an already-built app and does not make the current Windows application run on macOS.
+
+---
+
 ## To-Do
 
 ### Potential
